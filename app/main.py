@@ -1,10 +1,25 @@
+import json
+
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from app.db import engine
 from app.cache import r
-import pandas as pd
 
 app = FastAPI()
+
+ANALYTICS_CACHE_TTL = 600
+
+
+def get_cached_data(cache_key):
+    cached = r.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    return None
+
+
+def set_cached_data(cache_key, data):
+    r.set(cache_key, json.dumps(jsonable_encoder(data)), ex=ANALYTICS_CACHE_TTL)
 
 @app.get("/")
 def root():
@@ -26,12 +41,15 @@ def error_count():
     with engine.connect() as conn:
         result = conn.execute(text(query)).fetchone()[0]
 
-    r.set("error_count", result, ex=60)
+    r.set("error_count", result, ex=ANALYTICS_CACHE_TTL)
 
     return {"source": "database", "count": result}
 
 @app.get("/errors_per_hour")
 def errors_per_hour():
+    cached = get_cached_data("errors_per_hour")
+    if cached:
+        return cached
 
     query = """
     SELECT
@@ -47,10 +65,14 @@ def errors_per_hour():
         result = conn.execute(text(query))
         data = [dict(row._mapping) for row in result]
 
+    set_cached_data("errors_per_hour", data)
     return data
 
 @app.get("/server_failure_rate")
 def server_failure_rate():
+    cached = get_cached_data("server_failure_rate")
+    if cached:
+        return cached
 
     query = """
     SELECT
@@ -64,10 +86,14 @@ def server_failure_rate():
         result = conn.execute(text(query))
         data = [dict(row._mapping) for row in result]
 
+    set_cached_data("server_failure_rate", data)
     return data
 
 @app.get("/top_failing_services")
 def top_failing_services():
+    cached = get_cached_data("top_failing_services")
+    if cached:
+        return cached
 
     query = """
     SELECT
@@ -83,4 +109,5 @@ def top_failing_services():
         result = conn.execute(text(query))
         data = [dict(row._mapping) for row in result]
 
+    set_cached_data("top_failing_services", data)
     return data
